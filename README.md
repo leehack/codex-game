@@ -33,6 +33,18 @@ ngrok http 8080
 Open the ngrok `/host` URL on the projector. Attendees scan the QR code shown on
 that page.
 
+## Host Online
+
+Use a single always-on web service because rooms are stored in memory and the
+same process serves both Flutter Web and `/ws`.
+
+Recommended path: deploy the repository as a Docker web service on Render,
+Railway, Fly.io, or Cloud Run. The root `Dockerfile` builds Flutter Web, compiles
+the Dart server, and listens on `$PORT`.
+
+For meetup reliability, run one instance unless you add shared room storage.
+Multiple instances can split WebSocket clients across different in-memory rooms.
+
 ## Screens
 
 - `/host`: projector lobby, QR code, category/count setup, quiz boss, leaderboard.
