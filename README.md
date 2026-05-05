@@ -51,8 +51,8 @@ Pushes to `main` run `.github/workflows/deploy-cloud-run.yml`.
 
 The workflow uses GitHub Actions OIDC with Google Cloud Workload Identity
 Federation, so there is no service account JSON key in GitHub. It runs Flutter
-and server analysis/tests, builds the Docker image with Cloud Build, pushes it
-to Artifact Registry, and deploys the Cloud Run service.
+and server analysis/tests, builds the Docker image on the GitHub runner, pushes
+it to Artifact Registry, and deploys the Cloud Run service.
 
 ## Screens
 
