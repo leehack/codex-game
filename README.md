@@ -63,3 +63,7 @@ flutter test
 (cd server && dart test)
 flutter build web
 ```
+
+## License
+
+MIT
