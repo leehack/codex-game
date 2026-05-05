@@ -45,6 +45,15 @@ the Dart server, and listens on `$PORT`.
 For meetup reliability, run one instance unless you add shared room storage.
 Multiple instances can split WebSocket clients across different in-memory rooms.
 
+## CI/CD
+
+Pushes to `main` run `.github/workflows/deploy-cloud-run.yml`.
+
+The workflow uses GitHub Actions OIDC with Google Cloud Workload Identity
+Federation, so there is no service account JSON key in GitHub. It runs Flutter
+and server analysis/tests, builds the Docker image with Cloud Build, pushes it
+to Artifact Registry, and deploys the Cloud Run service.
+
 ## Screens
 
 - `/host`: projector lobby, QR code, category/count setup, quiz boss, leaderboard.

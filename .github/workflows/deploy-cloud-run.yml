@@ -1,0 +1,100 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: leehack-codex-quiz
+  PROJECT_NUMBER: "830158979412"
+  REGION: northamerica-northeast1
+  SERVICE: codex-quiz-raid
+  ARTIFACT_REPO: codex-game
+  IMAGE_NAME: codex-quiz-raid
+  GAR_LOCATION: northamerica-northeast1-docker.pkg.dev
+  WIF_PROVIDER: projects/830158979412/locations/global/workloadIdentityPools/github-actions/providers/github
+  DEPLOYER_SERVICE_ACCOUNT: github-actions-deployer@leehack-codex-quiz.iam.gserviceaccount.com
+
+jobs:
+  test-build-deploy:
+    name: Test, Build, Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter dependencies
+        run: flutter pub get
+
+      - name: Server dependencies
+        working-directory: server
+        run: dart pub get
+
+      - name: Analyze Flutter app
+        run: flutter analyze
+
+      - name: Analyze server
+        working-directory: server
+        run: dart analyze
+
+      - name: Test Flutter app
+        run: flutter test
+
+      - name: Test server
+        working-directory: server
+        run: dart test
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push image with Cloud Build
+        run: |
+          IMAGE="${GAR_LOCATION}/${PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:${GITHUB_SHA}"
+          gcloud builds submit \
+            --project="${PROJECT_ID}" \
+            --tag="${IMAGE}" \
+            .
+
+      - name: Deploy Cloud Run
+        run: |
+          IMAGE="${GAR_LOCATION}/${PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:${GITHUB_SHA}"
+          gcloud run deploy "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --platform=managed \
+            --image="${IMAGE}" \
+            --allow-unauthenticated \
+            --min-instances=0 \
+            --max-instances=1 \
+            --concurrency=1000 \
+            --memory=512Mi \
+            --cpu=1 \
+            --timeout=3600 \
+            --port=8080
+
+      - name: Print service URL
+        run: |
+          gcloud run services describe "${SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format='value(status.url)'
