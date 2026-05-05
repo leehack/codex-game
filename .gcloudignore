@@ -1,0 +1,11 @@
+.dart_tool/
+.git/
+.idea/
+build/
+coverage/
+server/.dart_tool/
+server/build/
+macos/Flutter/ephemeral/
+*.iml
+*.log
+.DS_Store
