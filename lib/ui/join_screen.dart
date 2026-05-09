@@ -444,30 +444,34 @@ class _AnswerPanel extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
           ),
-        for (var i = 0; i < question.options.length; i++) ...[
-          Expanded(
-            child: _AnswerButton(
-              index: i,
-              label: question.options[i],
-              color: category.accent,
-              disabled: answered,
-              selected: player?.selectedOption == i,
-              onTap: () {
-                HapticFeedback.heavyImpact();
-                sound.play(SoundCue.answer);
-                connection.sendAnswer(i);
-              },
-            ),
+        Expanded(
+          child: ListView.separated(
+            padding: EdgeInsets.zero,
+            itemCount: question.options.length,
+            separatorBuilder: (context, index) => const SizedBox(height: 10),
+            itemBuilder: (context, i) {
+              return AnswerChoiceTile(
+                index: i,
+                label: question.options[i],
+                color: category.accent,
+                disabled: answered,
+                selected: player?.selectedOption == i,
+                onTap: () {
+                  HapticFeedback.heavyImpact();
+                  sound.play(SoundCue.answer);
+                  connection.sendAnswer(i);
+                },
+              );
+            },
           ),
-          if (i != question.options.length - 1) const SizedBox(height: 10),
-        ],
+        ),
       ],
     );
   }
 }
 
-class _AnswerButton extends StatelessWidget {
-  const _AnswerButton({
+class AnswerChoiceTile extends StatelessWidget {
+  const AnswerChoiceTile({
     required this.index,
     required this.label,
     required this.color,
@@ -503,41 +507,45 @@ class _AnswerButton extends StatelessWidget {
             width: selected ? 4 : 3,
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: color,
-                  border: Border.all(color: cream),
-                ),
-                child: SizedBox(
-                  width: 42,
-                  height: 42,
-                  child: Center(
-                    child: Text(
-                      String.fromCharCode(65 + index),
-                      style: const TextStyle(
-                        color: ink,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 72),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: color,
+                    border: Border.all(color: cream),
+                  ),
+                  child: SizedBox(
+                    width: 42,
+                    height: 42,
+                    child: Center(
+                      child: Text(
+                        String.fromCharCode(65 + index),
+                        style: const TextStyle(
+                          color: ink,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    label,
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
