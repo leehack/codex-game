@@ -47,12 +47,18 @@ Multiple instances can split WebSocket clients across different in-memory rooms.
 
 ## CI/CD
 
-Pushes to `main` run `.github/workflows/deploy-cloud-run.yml`.
+Pushes to `main` run `.github/workflows/deploy-cloud-run.yml`, which validates
+the Flutter app and Dart server, builds the Docker image on the GitHub runner,
+pushes it to Artifact Registry, and deploys the production Cloud Run service.
+
+Pull requests against `main` run the same validation. For non-fork PRs, the
+workflow also builds an Artifact Registry image tagged with the PR number and
+head SHA, deploys a Cloud Run preview service named
+`codex-quiz-raid-pr-<number>`, and creates or updates a PR comment with the
+preview URL. Closing the PR deletes that preview service.
 
 The workflow uses GitHub Actions OIDC with Google Cloud Workload Identity
-Federation, so there is no service account JSON key in GitHub. It runs Flutter
-and server analysis/tests, builds the Docker image on the GitHub runner, pushes
-it to Artifact Registry, and deploys the Cloud Run service.
+Federation, so there is no service account JSON key in GitHub.
 
 ## Screens
 
