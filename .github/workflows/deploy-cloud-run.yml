@@ -4,11 +4,17 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - closed
   workflow_dispatch:
 
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
 
 env:
   PROJECT_ID: leehack-codex-quiz
@@ -22,10 +28,13 @@ env:
   DEPLOYER_SERVICE_ACCOUNT: github-actions-deployer@leehack-codex-quiz.iam.gserviceaccount.com
 
 jobs:
-  test-build-deploy:
-    name: Test, Build, Deploy
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -57,6 +66,20 @@ jobs:
       - name: Test server
         working-directory: server
         run: dart test
+
+  deploy-production:
+    name: Deploy production
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v3
@@ -99,3 +122,169 @@ jobs:
             --project="${PROJECT_ID}" \
             --region="${REGION}" \
             --format='value(status.url)'
+
+  deploy-preview:
+    name: Deploy PR preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      id-token: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${GAR_LOCATION}" --quiet
+
+      - name: Build and push PR image
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          IMAGE="${GAR_LOCATION}/${PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:pr-${PR_NUMBER}-${HEAD_SHA}"
+          docker build --tag="${IMAGE}" .
+          docker push "${IMAGE}"
+
+      - name: Deploy preview Cloud Run
+        id: deploy
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          PREVIEW_SERVICE="${SERVICE}-pr-${PR_NUMBER}"
+          IMAGE="${GAR_LOCATION}/${PROJECT_ID}/${ARTIFACT_REPO}/${IMAGE_NAME}:pr-${PR_NUMBER}-${HEAD_SHA}"
+
+          gcloud run deploy "${PREVIEW_SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --platform=managed \
+            --image="${IMAGE}" \
+            --allow-unauthenticated \
+            --min-instances=0 \
+            --max-instances=1 \
+            --concurrency=1000 \
+            --memory=512Mi \
+            --cpu=1 \
+            --timeout=3600 \
+            --port=8080
+
+          PREVIEW_URL="$(gcloud run services describe "${PREVIEW_SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" \
+            --format='value(status.url)')"
+
+          echo "preview_service=${PREVIEW_SERVICE}" >> "${GITHUB_OUTPUT}"
+          echo "preview_url=${PREVIEW_URL}" >> "${GITHUB_OUTPUT}"
+          echo "image=${IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Comment preview URL
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_SERVICE: ${{ steps.deploy.outputs.preview_service }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.preview_url }}
+          IMAGE: ${{ steps.deploy.outputs.image }}
+        run: |
+          MARKER="<!-- codex-game-preview-deploy -->"
+          BODY="$(cat <<EOF
+          ${MARKER}
+          ### Cloud Run preview
+
+          Preview URL: ${PREVIEW_URL}
+
+          Service: \`${PREVIEW_SERVICE}\`
+          Image: \`${IMAGE}\`
+          Commit: \`${{ github.event.pull_request.head.sha }}\`
+          EOF
+          )"
+
+          COMMENT_ID="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq ".[] | select(.user.type == \"Bot\" and (.body | contains(\"${MARKER}\"))) | .id" \
+            | tail -n 1)"
+
+          if [ -n "${COMMENT_ID}" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              -f body="${BODY}" >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              -f body="${BODY}" >/dev/null
+          fi
+
+  cleanup-preview:
+    name: Cleanup PR preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      id-token: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Delete preview Cloud Run service
+        env:
+          PREVIEW_SERVICE: ${{ env.SERVICE }}-pr-${{ github.event.pull_request.number }}
+        run: |
+          if gcloud run services describe "${PREVIEW_SERVICE}" \
+            --project="${PROJECT_ID}" \
+            --region="${REGION}" >/dev/null 2>&1; then
+            gcloud run services delete "${PREVIEW_SERVICE}" \
+              --project="${PROJECT_ID}" \
+              --region="${REGION}" \
+              --platform=managed \
+              --quiet
+          else
+            echo "Preview service ${PREVIEW_SERVICE} does not exist."
+          fi
+
+      - name: Update preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PREVIEW_SERVICE: ${{ env.SERVICE }}-pr-${{ github.event.pull_request.number }}
+        run: |
+          MARKER="<!-- codex-game-preview-deploy -->"
+          BODY="$(cat <<EOF
+          ${MARKER}
+          ### Cloud Run preview
+
+          Preview service \`${PREVIEW_SERVICE}\` has been deleted because this PR was closed.
+          EOF
+          )"
+
+          COMMENT_ID="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq ".[] | select(.user.type == \"Bot\" and (.body | contains(\"${MARKER}\"))) | .id" \
+            | tail -n 1)"
+
+          if [ -n "${COMMENT_ID}" ]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" \
+              -f body="${BODY}" >/dev/null
+          fi
